@@ -7,6 +7,15 @@
 [![Gemini](https://img.shields.io/badge/Gemini-2.5%20Flash-orange)](https://ai.google.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
+## 🎥 Project Demo
+
+[![Watch DocuParse AI Demo](https://img.youtube.com/vi/VhDpAYD8aCo/0.jpg)](https://youtu.be/VhDpAYD8aCo)
+
+[▶ Watch the full demo on YouTube](https://youtu.be/VhDpAYD8aCo)
+
+---
+
+
 ---
 
 ## Table of Contents
