@@ -23,11 +23,11 @@ class ParsedDocumentData(BaseModel):
     Flexible schema that handles both financial Invoices and general
     handwritten/printed tables (Stock Audits, Inventory Sheets, Inspection Logs).
     """
-    doc_type: str = Field(
+    doc_type: Optional[str] = Field(
         default="invoice",
         description="Type of document: 'invoice', 'receipt', 'stock_audit', 'inventory', 'table', or 'form'"
     )
-    title: str = Field(
+    title: Optional[str] = Field(
         default="Unknown Document",
         description="Document title, merchant/vendor name, or audit sheet header"
     )

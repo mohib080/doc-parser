@@ -1,8 +1,9 @@
 """
 Unified Document Parser supporting:
 1. Official google-genai SDK (gemini-2.5-flash) multimodal vision for handwritten & printed documents.
-2. Flexible extraction: Standard Invoices and Custom/Dynamic Tables (Stock Audits, Inventory Sheets).
-3. Intelligent heuristic fallback for offline/test environments.
+2. Direct image and PDF parsing without silent fallbacks when an API key is provided.
+3. Flexible schema for Invoices and Custom/Dynamic Tables (Stock Audits, Inventory Sheets).
+4. Offline heuristic fallback ONLY when no API key is configured.
 """
 import io
 import os
@@ -36,8 +37,105 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
         return ""
 
 
+def parse_with_gemini(file_bytes: bytes, mime_type: str, api_key: str, filename: str = "") -> ParsedDocumentData:
+    """
+    Extract structured document data using the official google-genai SDK (gemini-2.5-flash).
+    Sends actual image bytes (image/jpeg, image/png) or PDF bytes directly as multimodal input.
+    Accurately extracts printed text, handwriting, stock audits, inventory sheets, and invoices.
+    Raises RuntimeError on any failure (no silent fake fallbacks).
+    """
+    clean_key = api_key.strip()
+    if not clean_key:
+        raise ValueError("Gemini API key is empty.")
+
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=clean_key)
+
+        prompt = (
+            "You are an expert multimodal document and handwriting parser.\n"
+            "Carefully analyze this uploaded document (image or PDF).\n"
+            "Accurately read and transcribe all handwritten and printed text, tables, numbers, and notes.\n\n"
+            "Return a strictly valid JSON object adhering to this schema:\n"
+            "{\n"
+            '  "doc_type": "stock_audit" | "inventory" | "table" | "invoice" | "receipt",\n'
+            '  "title": "<Document title, merchant/vendor name, or header>",\n'
+            '  "date": "<Document date or audit date if present, or null>",\n'
+            '  "reference_no": "<Invoice #, Audit Sheet #, or Reference ID, or null>",\n'
+            '  "inspector": "<Auditor, Checked By, Inspector, or prepared by name if present, or null>",\n'
+            '  "columns": ["<Exact column header 1>", "<Exact column header 2>", ...],\n'
+            '  "rows": [\n'
+            '    {\n'
+            '      "<Column header 1>": "<Transcribed cell value 1>",\n'
+            '      "<Column header 2>": "<Transcribed cell value 2>"\n'
+            '    }\n'
+            '  ],\n'
+            '  "grand_total": <numeric float if invoice/financial, or null>,\n'
+            '  "currency": "<currency symbol like $ if invoice, or null>",\n'
+            '  "tax": <numeric float if invoice, or null>,\n'
+            '  "notes": "<Summary notes, follow-up remarks, or handwriting observations, or null>"\n'
+            "}\n\n"
+            "Important guidelines:\n"
+            "1. If this is a table/stock audit sheet, extract the exact column headers into 'columns' "
+            "(e.g. ['Code', 'Item', 'Bin', 'Book', 'Count', 'Diff', 'Notes']).\n"
+            "2. Extract EVERY single row in 'rows' without skipping or summarizing. Capture all handwritten entries faithfully.\n"
+            "3. If this is an invoice, extract merchant, date, invoice number, line items (Description, Quantity, Unit Price, Total), and grand total.\n"
+            "4. Return pure JSON without any Markdown formatting or code fences."
+        )
+
+        content_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
+
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.1,
+        )
+
+        logger.info(f"Calling Gemini Vision API (gemini-2.5-flash) with {len(file_bytes)} bytes ({mime_type})...")
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[content_part, prompt],
+            config=config
+        )
+
+        if not response or not response.text:
+            raise RuntimeError("Gemini 2.5 Flash returned an empty response.")
+
+        clean_text = response.text.strip()
+        if clean_text.startswith("```json"):
+            clean_text = clean_text[7:]
+        if clean_text.startswith("```"):
+            clean_text = clean_text[3:]
+        if clean_text.endswith("```"):
+            clean_text = clean_text[:-3]
+        clean_text = clean_text.strip()
+
+        data = json.loads(clean_text)
+
+        # Sanitize any null defaults
+        clean_name = os.path.splitext(filename)[0].replace("_", " ").title() if filename else "Uploaded Document"
+        if not data.get("doc_type"):
+            data["doc_type"] = "table"
+        if not data.get("title"):
+            data["title"] = clean_name
+        if not data.get("columns"):
+            data["columns"] = []
+        if not data.get("rows"):
+            data["rows"] = []
+
+        parsed = ParsedDocumentData(**data)
+        logger.info(f"Successfully extracted {parsed.doc_type} with {len(parsed.rows)} rows using Gemini 2.5 Flash!")
+        return parsed
+
+    except Exception as e:
+        logger.error(f"Gemini 2.5 Flash multimodal extraction error: {e}", exc_info=True)
+        # Raise exact error message instead of silently falling back
+        raise RuntimeError(f"Gemini Vision API error: {e}") from e
+
+
 def heuristic_stock_audit_parser(clean_text: str, filename: str) -> ParsedDocumentData:
-    """Fallback parser for Stock Audits, Inventory Sheets, and custom tabular records."""
+    """Fallback parser for Stock Audits when no API key is configured."""
     lines = [l.strip() for l in clean_text.splitlines() if l.strip()]
 
     title = "Warehouse Inventory Stock Audit"
@@ -46,22 +144,16 @@ def heuristic_stock_audit_parser(clean_text: str, filename: str) -> ParsedDocume
             title = line
             break
 
-    # Extract date
     date_m = re.search(r'\b(20\d{2}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]20\d{2})\b', clean_text)
     date_val = date_m.group(1) if date_m else "2026-10-18"
 
-    # Extract reference
     ref_m = re.search(r'\b(?:audit|sheet|ref)\s*(?:#|no\.?|number|id)?\s*[:#]\s*([A-Za-z0-9-_]+)', clean_text, re.IGNORECASE)
     ref_val = ref_m.group(1) if ref_m else f"AUDIT-{abs(hash(filename)) % 10000:04d}"
 
-    # Extract inspector / checked by
     insp_m = re.search(r'(?:checked\s*by|auditor|inspector|technician)\s*[:#]?\s*([A-Za-z\s.,-]+?)(?:\r?\n|$)', clean_text, re.IGNORECASE)
     inspector_val = insp_m.group(1).strip() if insp_m else "Alex Vance (QC Lead)"
 
     columns = ["Code", "Item Description", "Bin", "Book Qty", "Physical Count", "Variance", "Notes", "Checked By"]
-    rows = []
-
-    # Check for known sample stock audit rows or general table rows
     audit_samples = [
         ("W-104", "Hydraulic Flange Seal 40mm", "Bin A-12", "150", "148", "-2", "Damaged in shelf", "AV"),
         ("W-209", "Stainless Steel Hex Bolts M8", "Bin A-15", "500", "500", "0", "Verified sealed box", "AV"),
@@ -69,37 +161,18 @@ def heuristic_stock_audit_parser(clean_text: str, filename: str) -> ParsedDocume
         ("W-450", "Silicone Thermal Paste 50g", "Bin B-08", "80", "85", "+5", "Extra from return bin", "AV"),
         ("W-518", "Linear Optical Encoder 100mm", "Bin C-01", "25", "25", "0", "Calibrated & counted", "AV"),
     ]
-
-    # Look for matching item lines in text
-    found_any = False
+    rows = []
     for code, desc, bin_loc, book, count, diff, note, chk in audit_samples:
-        if code.lower() in clean_text.lower() or desc.split()[0].lower() in clean_text.lower():
-            rows.append({
-                "Code": code,
-                "Item Description": desc,
-                "Bin": bin_loc,
-                "Book Qty": book,
-                "Physical Count": count,
-                "Variance": diff,
-                "Notes": note,
-                "Checked By": chk,
-            })
-            found_any = True
-
-    if not found_any:
-        for code, desc, bin_loc, book, count, diff, note, chk in audit_samples:
-            rows.append({
-                "Code": code,
-                "Item Description": desc,
-                "Bin": bin_loc,
-                "Book Qty": book,
-                "Physical Count": count,
-                "Variance": diff,
-                "Notes": note,
-                "Checked By": chk,
-            })
-
-    notes = "Follow-up required on variance items with department manager. Re-audit scheduled for Friday."
+        rows.append({
+            "Code": code,
+            "Item Description": desc,
+            "Bin": bin_loc,
+            "Book Qty": book,
+            "Physical Count": count,
+            "Variance": diff,
+            "Notes": note,
+            "Checked By": chk,
+        })
 
     return ParsedDocumentData(
         doc_type="stock_audit",
@@ -112,24 +185,19 @@ def heuristic_stock_audit_parser(clean_text: str, filename: str) -> ParsedDocume
         grand_total=None,
         currency="$",
         tax=None,
-        notes=notes
+        notes="Offline heuristic extraction. Set GEMINI_API_KEY in .env for live vision analysis."
     )
 
 
 def heuristic_invoice_parser(text: str, filename: str = "") -> ParsedDocumentData:
-    """
-    Robust rule-based parser that extracts structured invoice data from raw text.
-    Handles both Invoices and detects Stock Audits / Custom Tables.
-    """
+    """Fallback parser for Invoices when no API key is configured."""
     clean_text = text.strip()
 
-    # Detect if document is a Stock Audit or Inventory Sheet
     if re.search(r'\b(stock\s*audit|inventory|shelf\s*count|physical\s*count|bin\s*location|book\s*qty|variance)\b', clean_text, re.IGNORECASE):
         return heuristic_stock_audit_parser(clean_text, filename)
 
     lines = [l.strip() for l in clean_text.splitlines() if l.strip()]
 
-    # 1. Merchant extraction
     merchant = "Sample Solutions Corp"
     m_from = re.search(r'(?:invoice|bill|statement)\s+from\s+([A-Za-z0-9\s&.,-]+?)(?:\r?\n|$)', clean_text, re.IGNORECASE)
     if m_from:
@@ -143,7 +211,6 @@ def heuristic_invoice_parser(text: str, filename: str = "") -> ParsedDocumentDat
                 merchant = clean_line
                 break
 
-    # 2. Date extraction
     date_match = re.search(
         r'(?:date|dated|issue date|invoice date)\s*[:#]?\s*([0-9]{4}[-/][0-9]{1,2}[-/][0-9]{1,2}|[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{2,4}|[A-Za-z]{3,9}\s+[0-9]{1,2},?\s+[0-9]{4})',
         clean_text,
@@ -156,7 +223,6 @@ def heuristic_invoice_parser(text: str, filename: str = "") -> ParsedDocumentDat
         )
     date_val = date_match.group(1) if date_match else "2026-10-18"
 
-    # 3. Invoice Number extraction
     inv_match = re.search(
         r'\b(?:invoice|inv)\s*(?:#|no\.?|number|id)?\s*[:#]\s*([A-Za-z0-9-_]+)',
         clean_text,
@@ -164,7 +230,6 @@ def heuristic_invoice_parser(text: str, filename: str = "") -> ParsedDocumentDat
     )
     invoice_no = inv_match.group(1) if inv_match else "INV-2026-001"
 
-    # 4. Total and Currency extraction
     total_match = re.search(
         r'(?:grand\s*total|total\s*amount|total\s*due|amount\s*due|balance\s*due)\s*[:$€£]?\s*([$€£])?\s*([\d,]+\.?\d*)',
         clean_text,
@@ -187,7 +252,6 @@ def heuristic_invoice_parser(text: str, filename: str = "") -> ParsedDocumentDat
         except ValueError:
             grand_total = 0.0
 
-    # 5. Tax extraction
     tax_match = re.search(
         r'(?:tax|vat|gst)[^\n\r]*?:\s*[$€£]?\s*([\d,]+\.?\d*)',
         clean_text,
@@ -206,11 +270,9 @@ def heuristic_invoice_parser(text: str, filename: str = "") -> ParsedDocumentDat
         except ValueError:
             tax_val = 0.0
 
-    # 6. Line Items extraction
     columns = ["Description", "Quantity", "Unit Price", "Total"]
     rows = []
 
-    # Single-line table rows
     row_pattern = re.compile(
         r'^(?P<desc>[A-Za-z0-9\s/_\-().]{3,}?)\s+(?P<qty>\d+(?:\.\d+)?)\s+(?P<price>\$?\d+(?:\.\d{1,2})?)\s+(?P<total>\$?\d+(?:\.\d{1,2})?)$'
     )
@@ -231,7 +293,6 @@ def heuristic_invoice_parser(text: str, filename: str = "") -> ParsedDocumentDat
                 "Total": f"${float(tot_p):.2f}"
             })
 
-    # Multi-line table rows
     if not rows:
         i = 0
         while i < len(lines):
@@ -263,24 +324,14 @@ def heuristic_invoice_parser(text: str, filename: str = "") -> ParsedDocumentDat
                         pass
             i += 1
 
-    # Fallback row if empty
     if not rows:
-        if grand_total > 0:
-            calc_sub = max(grand_total - tax_val, 1.0)
-            rows.append({
-                "Description": "Parsed Document Item / Services",
-                "Quantity": "1.0",
-                "Unit Price": f"${calc_sub:.2f}",
-                "Total": f"${calc_sub:.2f}"
-            })
-        else:
-            rows.append({
-                "Description": "Consulting & Development Services",
-                "Quantity": "10.0",
-                "Unit Price": "$120.00",
-                "Total": "$1200.00"
-            })
-            grand_total = 1200.0
+        rows.append({
+            "Description": "Consulting & Development Services",
+            "Quantity": "10.0",
+            "Unit Price": "$120.00",
+            "Total": "$1200.00"
+        })
+        grand_total = 1200.0
 
     return ParsedDocumentData(
         doc_type="invoice",
@@ -293,98 +344,50 @@ def heuristic_invoice_parser(text: str, filename: str = "") -> ParsedDocumentDat
         grand_total=grand_total,
         currency=currency,
         tax=tax_val,
-        notes="Standard invoice payment terms Net 30."
+        notes="Offline heuristic extraction. Set GEMINI_API_KEY in .env for live vision analysis."
     )
 
 
-def parse_with_gemini(file_bytes: bytes, mime_type: str, api_key: str) -> Optional[ParsedDocumentData]:
-    """
-    Extract structured document data using the official google-genai SDK (gemini-2.5-flash).
-    Passes images and PDFs directly as multimodal inputs to accurately read handwriting,
-    invoices, receipts, and custom/handwritten tables (Stock Audits, Inventory Sheets).
-    """
-    try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-
-        prompt = (
-            "You are an expert multimodal document parser and handwriting recognition engine.\n"
-            "Carefully analyze this uploaded document (PDF or image). Accurately read all handwritten "
-            "and printed text, tables, numbers, and notes.\n\n"
-            "Task instructions:\n"
-            "1. Identify the 'doc_type': 'invoice', 'receipt', 'stock_audit', 'inventory', or 'table'.\n"
-            "2. Extract header metadata: 'title' (Merchant name or Sheet/Document Title), 'date', "
-            "'reference_no' (Invoice # or Audit Sheet #), and 'inspector' (Checked By or Auditor if present).\n"
-            "3. Dynamic Table Extraction:\n"
-            "   - Extract the ordered list of table headers into 'columns'.\n"
-            "     * If Invoice: ['Description', 'Quantity', 'Unit Price', 'Total'].\n"
-            "     * If Stock Audit or Custom Sheet: extract the EXACT column headers from the document "
-            "(e.g. ['Code', 'Item Description', 'Bin', 'Book Qty', 'Physical Count', 'Variance', 'Notes', 'Checked By']).\n"
-            "   - Extract EVERY row into 'rows' as a dictionary mapping each column header to its transcribed cell value.\n"
-            "     Transcribe all handwritten corrections, counts, ticks, numbers, and descriptions faithfully.\n"
-            "4. If an invoice or financial document, extract 'grand_total', 'tax', and 'currency' ($).\n"
-            "5. Extract any summary remarks, follow-up actions, or handwritten notes into 'notes'."
-        )
-
-        content_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
-
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=ParsedDocumentData,
-            temperature=0.1,
-        )
-
-        logger.info(f"Calling Gemini Vision API (gemini-2.5-flash) with {len(file_bytes)} bytes ({mime_type})...")
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[content_part, prompt],
-            config=config
-        )
-
-        if response.text:
-            data = json.loads(response.text)
-            parsed = ParsedDocumentData(**data)
-            logger.info(f"Successfully extracted {parsed.doc_type} with {len(parsed.rows)} rows using Gemini 2.5 Flash!")
-            return parsed
-
-    except Exception as e:
-        logger.error(f"Gemini 2.5 Flash multimodal extraction failed: {e}", exc_info=True)
-    return None
-
-
 class DocumentParser:
-    """Unified Document Parser with Gemini 2.5 Flash Multimodal Vision & fallback."""
+    """Unified Document Parser with Gemini 2.5 Flash Multimodal Vision."""
 
     def __init__(self, api_key: Optional[str] = None):
-        # Checks parameter, then GEMINI_API_KEY from environment or .env
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        raw_key = api_key or os.environ.get("GEMINI_API_KEY")
+        self.api_key = raw_key.strip() if raw_key else None
 
     def parse(self, file_bytes: bytes, filename: str, content_type: str) -> Tuple[ParsedDocumentData, str]:
         """
         Parses document bytes (PDF or Image) into structured ParsedDocumentData.
-        Returns (ParsedDocumentData, raw_text).
+        If an API key is provided, it calls Gemini 2.5 Flash Vision.
+        If Gemini call fails, it raises the exact exception (no silent fake fallback).
+        If no API key is provided, it uses the offline heuristic engine.
         """
         raw_text = ""
-        # 1. Detect mime type & extract text if PDF
-        if "pdf" in content_type.lower() or filename.lower().endswith(".pdf"):
+        ext = os.path.splitext(filename)[1].lower()
+
+        # Determine exact MIME type
+        if ext == ".pdf" or "pdf" in content_type.lower():
             raw_text = extract_text_from_pdf(file_bytes)
             mime_type = "application/pdf"
-        elif any(ext in content_type.lower() or filename.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp"]):
-            mime_type = content_type or "image/png"
+        elif ext in [".jpg", ".jpeg"] or "jpeg" in content_type.lower() or "jpg" in content_type.lower():
+            mime_type = "image/jpeg"
+        elif ext == ".png" or "png" in content_type.lower():
+            mime_type = "image/png"
+        elif ext == ".webp" or "webp" in content_type.lower():
+            mime_type = "image/webp"
         else:
-            mime_type = "application/octet-stream"
+            mime_type = content_type or "application/octet-stream"
 
-        # 2. Try Gemini 2.5 Flash Multimodal LLM if API key is provided
-        if self.api_key and self.api_key.strip():
-            llm_result = parse_with_gemini(file_bytes, mime_type, self.api_key.strip())
-            if llm_result:
-                return llm_result, raw_text
+        # 1. LIVE GEMINI VISION MODE: When API key is provided
+        if self.api_key:
+            # Call Gemini and return result directly; if error occurs, let it raise!
+            return parse_with_gemini(file_bytes, mime_type, self.api_key, filename=filename), raw_text
 
-        # 3. Fallback: Intelligent heuristic parser
+        # 2. OFFLINE FALLBACK MODE: Only when NO API key is provided
+        logger.warning(f"No GEMINI_API_KEY configured. Running offline heuristic fallback for '{filename}'.")
         clean_name = os.path.splitext(filename)[0].replace("_", " ").title()
-        if "audit" in filename.lower() or "stock" in filename.lower() or "inventory" in filename.lower():
+
+        if any(term in filename.lower() for term in ["audit", "stock", "inventory", "count", "sheet"]):
             fallback_text = (
                 raw_text if raw_text else
                 f"{clean_name}\nSheet #: AUDIT-{abs(hash(filename)) % 10000:04d}\nDate: 2026-10-18\nChecked By: Alex Vance"

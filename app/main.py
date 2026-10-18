@@ -86,7 +86,10 @@ async def parse_document(
     # API key preference: Header > .env/environment
     api_key = x_gemini_api_key or os.environ.get("GEMINI_API_KEY")
     parser = DocumentParser(api_key=api_key)
-    parsed_data, raw_text = parser.parse(file_bytes, file.filename, file.content_type or "application/octet-stream")
+    try:
+        parsed_data, raw_text = parser.parse(file_bytes, file.filename, file.content_type or "application/octet-stream")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     # Save to SQLite database: 'documents' table
     doc_record = Document(
