@@ -4,6 +4,7 @@ Covers both Invoices and Dynamic Tables (Stock Audit Sheets).
 """
 import os
 import io
+import uuid
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -215,3 +216,33 @@ def test_parse_handwritten_user_image(monkeypatch):
     assert "M6 bolts" in first_row_text
     assert "P901" in last_row_text
     assert "Paint brushes" in last_row_text
+
+
+def test_file_hash_caching_avoids_llm_call():
+    """Verify that uploading the same file twice retrieves the cached document instantly without network calls."""
+    import hashlib
+    unique_content = f"Invoice #UNIQUE-{uuid.uuid4().hex}\nTotal: $999.00".encode()
+    expected_hash = hashlib.sha256(unique_content).hexdigest()
+
+    # First upload: parses and saves hash
+    resp1 = client.post(
+        "/api/parse",
+        files={"file": ("unique_invoice.pdf", unique_content, "application/pdf")}
+    )
+    assert resp1.status_code == 201
+    data1 = resp1.json()
+    assert data1["document"]["file_hash"] == expected_hash
+    first_id = data1["document"]["id"]
+
+    # Second upload: must hit cache
+    resp2 = client.post(
+        "/api/parse",
+        files={"file": ("renamed_copy.pdf", unique_content, "application/pdf")}
+    )
+    assert resp2.status_code == 201
+    data2 = resp2.json()
+    assert data2["cached"] is True
+    assert data2["document"]["id"] == first_id
+    assert data2["document"]["file_hash"] == expected_hash
+    assert "Cached:" in data2["message"]
+

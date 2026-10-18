@@ -16,6 +16,7 @@ class Document(Base):
     filename = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)
     content_type = Column(String(100), nullable=False)
+    file_hash = Column(String(64), index=True, nullable=True)  # SHA-256 hex digest for caching
 
     # Document type & headers
     doc_type = Column(String(50), nullable=True, default="invoice")
@@ -59,6 +60,7 @@ class Document(Base):
             "filename": self.filename,
             "file_path": self.file_path,
             "content_type": self.content_type,
+            "file_hash": self.file_hash,
             "doc_type": self.doc_type or "invoice",
             "merchant": self.merchant,
             "title": self.merchant,

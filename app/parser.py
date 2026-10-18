@@ -10,6 +10,7 @@ import os
 import re
 import json
 import logging
+import hashlib
 from typing import Optional, Tuple, List, Dict, Any
 from pypdf import PdfReader
 from dotenv import load_dotenv
@@ -348,20 +349,87 @@ def heuristic_invoice_parser(text: str, filename: str = "") -> ParsedDocumentDat
     )
 
 
-class DocumentParser:
-    """Unified Document Parser with Gemini 2.5 Flash Multimodal Vision."""
+def compute_file_hash(file_bytes: bytes) -> str:
+    """Compute SHA-256 hex digest of file bytes for caching."""
+    return hashlib.sha256(file_bytes).hexdigest()
 
-    def __init__(self, api_key: Optional[str] = None):
+
+def document_to_parsed_data(cached_doc) -> ParsedDocumentData:
+    """Reconstruct ParsedDocumentData from a cached database Document record."""
+    cols = json.loads(cached_doc.columns_json) if cached_doc.columns_json else []
+    rows = json.loads(cached_doc.rows_json) if cached_doc.rows_json else []
+    items = [
+        LineItemSchema(
+            description=item.description,
+            quantity=item.quantity,
+            unit_price=item.unit_price,
+            total_price=item.total_price
+        )
+        for item in (cached_doc.line_items or [])
+    ]
+    return ParsedDocumentData(
+        doc_type=cached_doc.doc_type or "invoice",
+        title=cached_doc.merchant or "Unknown",
+        merchant=cached_doc.merchant,
+        date=cached_doc.invoice_date,
+        invoice_no=cached_doc.invoice_no,
+        reference_no=cached_doc.invoice_no,
+        inspector=cached_doc.inspector,
+        columns=cols,
+        rows=rows,
+        line_items=items,
+        grand_total=cached_doc.grand_total,
+        currency=cached_doc.currency,
+        tax=cached_doc.tax,
+        notes=cached_doc.notes
+    )
+
+
+class DocumentParser:
+    """Unified Document Parser with Gemini 2.5 Flash Multimodal Vision and SHA-256 Caching."""
+
+    def __init__(self, api_key: Optional[str] = None, db: Optional[Any] = None):
         raw_key = api_key or os.environ.get("GEMINI_API_KEY")
         self.api_key = raw_key.strip() if raw_key else None
+        self.db = db
+        self.last_cache_hit = False
+        self.last_file_hash = None
 
-    def parse(self, file_bytes: bytes, filename: str, content_type: str) -> Tuple[ParsedDocumentData, str]:
+    def parse(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        content_type: str,
+        db: Optional[Any] = None
+    ) -> Tuple[ParsedDocumentData, str]:
         """
         Parses document bytes (PDF or Image) into structured ParsedDocumentData.
-        If an API key is provided, it calls Gemini 2.5 Flash Vision.
-        If Gemini call fails, it raises the exact exception (no silent fake fallback).
-        If no API key is provided, it uses the offline heuristic engine.
+        1. Computes SHA-256 hash of file bytes.
+        2. Checks SQLite database if a document with that hash already exists.
+           If found, returns the cached document and line items instantly (no network call to Gemini).
+        3. If an API key is provided, calls Gemini 2.5 Flash Vision.
+        4. If no API key is provided, uses the offline heuristic engine.
         """
+        # 1. Compute SHA-256 hash
+        file_hash = compute_file_hash(file_bytes)
+        self.last_file_hash = file_hash
+
+        # 2. Check SQLite cache before calling Gemini
+        active_db = db or self.db
+        try:
+            from .database import get_document_by_hash
+            cached_doc = get_document_by_hash(file_hash, db=active_db)
+            if cached_doc:
+                logger.info(
+                    f"Cache HIT: Document with SHA-256 {file_hash[:12]}... already parsed as "
+                    f"'{cached_doc.filename}' (ID: {cached_doc.id}). Returning cached data instantly."
+                )
+                self.last_cache_hit = True
+                return document_to_parsed_data(cached_doc), (cached_doc.raw_text or "")
+        except Exception as cache_err:
+            logger.warning(f"Error checking hash cache: {cache_err}")
+
+        self.last_cache_hit = False
         raw_text = ""
         ext = os.path.splitext(filename)[1].lower()
 
@@ -378,12 +446,12 @@ class DocumentParser:
         else:
             mime_type = content_type or "application/octet-stream"
 
-        # 1. LIVE GEMINI VISION MODE: When API key is provided
+        # 3. LIVE GEMINI VISION MODE: When API key is provided
         if self.api_key:
             # Call Gemini and return result directly; if error occurs, let it raise!
             return parse_with_gemini(file_bytes, mime_type, self.api_key, filename=filename), raw_text
 
-        # 2. OFFLINE FALLBACK MODE: Only when NO API key is provided
+        # 4. OFFLINE FALLBACK MODE: Only when NO API key is provided
         logger.warning(f"No GEMINI_API_KEY configured. Running offline heuristic fallback for '{filename}'.")
         clean_name = os.path.splitext(filename)[0].replace("_", " ").title()
 

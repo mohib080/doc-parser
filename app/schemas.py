@@ -156,6 +156,7 @@ class DocumentResponse(BaseModel):
     filename: str
     file_path: str
     content_type: str
+    file_hash: Optional[str] = None
     doc_type: Optional[str] = "invoice"
     merchant: Optional[str]
     title: Optional[str] = None
@@ -176,5 +177,6 @@ class DocumentResponse(BaseModel):
 class ParseResponse(BaseModel):
     success: bool
     message: str
+    cached: Optional[bool] = False
     document: DocumentResponse
     parsed_data: ParsedDocumentData

@@ -20,13 +20,13 @@ from dotenv import load_dotenv
 # Load .env file automatically
 load_dotenv()
 
-from .database import engine, Base, get_db
+from .database import engine, Base, get_db, init_db, get_document_by_hash
 from .models import Document, LineItem
 from .schemas import DocumentResponse, ParseResponse, ParsedDocumentData
-from .parser import DocumentParser
+from .parser import DocumentParser, compute_file_hash, document_to_parsed_data
 
-# Ensure DB tables exist
-Base.metadata.create_all(bind=engine)
+# Ensure DB tables & file_hash column migration exist
+init_db()
 
 # Directory configurations
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -77,6 +77,25 @@ async def parse_document(
     if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
+    # 1. Compute SHA-256 hash of uploaded file
+    file_hash = compute_file_hash(file_bytes)
+
+    # 2. Check if a document with this hash already exists in SQLite
+    cached_doc = get_document_by_hash(file_hash, db=db)
+    if cached_doc:
+        doc_dict = cached_doc.to_dict()
+        rel_path = f"/api/files/{os.path.basename(cached_doc.file_path)}"
+        doc_dict["file_path"] = rel_path
+        doc_dict["cached"] = True
+        parsed_data = document_to_parsed_data(cached_doc)
+        return {
+            "success": True,
+            "cached": True,
+            "message": f"Cached: Loaded {cached_doc.doc_type} '{cached_doc.filename}' instantly without network call (SHA-256: {file_hash[:8]}...)",
+            "document": doc_dict,
+            "parsed_data": parsed_data
+        }
+
     # Generate unique storage filename
     unique_name = f"{uuid.uuid4().hex}_{file.filename}"
     saved_path = os.path.join(UPLOAD_DIR, unique_name)
@@ -85,17 +104,18 @@ async def parse_document(
 
     # API key preference: Header > .env/environment
     api_key = x_gemini_api_key or os.environ.get("GEMINI_API_KEY")
-    parser = DocumentParser(api_key=api_key)
+    parser = DocumentParser(api_key=api_key, db=db)
     try:
-        parsed_data, raw_text = parser.parse(file_bytes, file.filename, file.content_type or "application/octet-stream")
+        parsed_data, raw_text = parser.parse(file_bytes, file.filename, file.content_type or "application/octet-stream", db=db)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Save to SQLite database: 'documents' table
+    # Save to SQLite database: 'documents' table with file_hash
     doc_record = Document(
         filename=file.filename,
         file_path=saved_path,
         content_type=file.content_type or "application/octet-stream",
+        file_hash=file_hash,
         doc_type=parsed_data.doc_type,
         merchant=parsed_data.title,
         invoice_date=parsed_data.date,
@@ -129,9 +149,11 @@ async def parse_document(
 
     doc_dict = doc_record.to_dict()
     doc_dict["file_path"] = f"/api/files/{unique_name}"
+    doc_dict["cached"] = False
 
     return {
         "success": True,
+        "cached": False,
         "message": f"Successfully parsed {parsed_data.doc_type} document '{file.filename}'",
         "document": doc_dict,
         "parsed_data": parsed_data
