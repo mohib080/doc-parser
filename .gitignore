@@ -26,3 +26,6 @@ app/uploads/*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Internal developer documentation
+CODE_WALKTHROUGH.md
