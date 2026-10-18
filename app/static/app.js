@@ -74,10 +74,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // Update API Key UI State
   function updateApiKeyStatus() {
     if (geminiApiKey) {
-      apiKeyStatus.textContent = "Vision: Active (Custom Key)";
+      apiKeyStatus.textContent = "Custom Key: Active";
       apiKeyStatus.classList.add("text-emerald-700", "font-bold");
     } else {
-      apiKeyStatus.textContent = "Key: .env / Fallback";
+      apiKeyStatus.textContent = "Custom API Key";
       apiKeyStatus.classList.remove("text-emerald-700", "font-bold");
     }
   }

@@ -16,8 +16,9 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def setup_and_teardown():
+def setup_and_teardown(monkeypatch):
     Base.metadata.create_all(bind=engine)
+    monkeypatch.setenv("GEMINI_API_KEY", "")
     yield
 
 
@@ -178,11 +179,18 @@ def test_delete_document():
     assert get_resp.status_code == 404
 
 
-def test_parse_handwritten_user_image():
+def test_parse_handwritten_user_image(monkeypatch):
     """Verify live Gemini Vision extracts 12 rows (B101 M6 bolts through P901 Paint brushes)."""
     user_img_path = os.path.join(os.path.dirname(__file__), "..", "app", "uploads", "58f833abda8a4121b2560080d04f206b_handwritten exce.jpg")
     if not os.path.exists(user_img_path):
         pytest.skip("User image not found")
+
+    from dotenv import dotenv_values
+    env_vals = dotenv_values()
+    real_key = env_vals.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not real_key:
+        pytest.skip("No GEMINI_API_KEY found for live vision test")
+    monkeypatch.setenv("GEMINI_API_KEY", real_key)
 
     with open(user_img_path, "rb") as f:
         file_bytes = f.read()
@@ -191,6 +199,9 @@ def test_parse_handwritten_user_image():
         "/api/parse",
         files={"file": ("handwritten exce.jpg", file_bytes, "image/jpeg")}
     )
+    if response.status_code == 500 and "RESOURCE_EXHAUSTED" in response.text:
+        pytest.skip("Gemini free tier quota limit reached (429 RESOURCE_EXHAUSTED)")
+
     assert response.status_code == 201, f"Failed: {response.text}"
     data = response.json()
     doc = data["document"]
