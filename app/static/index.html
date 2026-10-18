@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DocuParse AI | Intelligent Document & Invoice Parser</title>
+  <title>DocuParse AI | Multimodal Document & Vision Parser</title>
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons -->
@@ -34,7 +34,6 @@
   </script>
   <style>
     body { font-family: 'Inter', sans-serif; }
-    /* Custom scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #f1f5f9; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -44,38 +43,44 @@
 <body class="h-full flex flex-col text-slate-800">
 
   <!-- Top Navigation Bar -->
-  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center space-x-3">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-white shadow-md shadow-indigo-100">
-          <i data-lucide="file-spreadsheet" class="w-5 h-5"></i>
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-emerald-500 flex items-center justify-center text-white shadow-md shadow-indigo-100">
+          <i data-lucide="eye" class="w-5 h-5"></i>
         </div>
         <div>
           <div class="flex items-center space-x-2">
             <span class="font-bold text-lg tracking-tight text-slate-900">DocuParse <span class="text-indigo-600">AI</span></span>
-            <span class="bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded-full font-medium">Prototype</span>
+            <span class="bg-emerald-100 text-emerald-800 text-[11px] px-2 py-0.5 rounded-full font-semibold">Gemini 2.5 Flash Vision</span>
           </div>
-          <p class="text-xs text-slate-500">LLM-Powered Invoice Extraction & Schema Storage</p>
+          <p class="text-xs text-slate-500">Multimodal Invoices, Handwritten Sheets &amp; Dynamic Tables</p>
         </div>
       </div>
 
       <!-- Header Actions -->
-      <div class="flex items-center space-x-3">
-        <!-- API Key Config Button -->
+      <div class="flex items-center space-x-2 sm:space-x-3">
+        <!-- Live API Key Status / Config -->
         <button id="btn-config-key" class="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition border border-slate-200">
           <i data-lucide="key" class="w-3.5 h-3.5 text-slate-500"></i>
-          <span id="api-key-status">LLM Key: Fallback/Env</span>
+          <span id="api-key-status">Key: .env / Fallback</span>
         </button>
 
         <!-- Sample Invoice Quick Test -->
-        <button id="btn-load-sample" class="inline-flex items-center space-x-1.5 px-3.5 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg shadow-sm transition">
-          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-indigo-600"></i>
-          <span>Load Sample Invoice</span>
+        <button id="btn-load-sample" class="inline-flex items-center space-x-1 px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg shadow-2xs transition">
+          <i data-lucide="receipt" class="w-3.5 h-3.5 text-indigo-600"></i>
+          <span class="hidden sm:inline">Sample</span> Invoice
+        </button>
+
+        <!-- Sample Stock Audit (Custom Table) Quick Test -->
+        <button id="btn-load-audit" class="inline-flex items-center space-x-1 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg shadow-2xs transition">
+          <i data-lucide="clipboard-check" class="w-3.5 h-3.5 text-emerald-600"></i>
+          <span class="hidden sm:inline">Sample</span> Stock Audit
         </button>
 
         <!-- History Toggle -->
         <button id="btn-toggle-history" class="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 rounded-lg transition border border-slate-200">
-          <i data-lucide="history" class="w-3.5 h-3.5 text-slate-500"></i>
+          <i data-lucide="database" class="w-3.5 h-3.5 text-slate-500"></i>
           <span>History (<span id="history-count">0</span>)</span>
         </button>
       </div>
@@ -86,7 +91,7 @@
   <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
 
     <!-- Upload & Drag-and-Drop Zone -->
-    <section id="upload-section" class="bg-white rounded-2xl border-2 border-dashed border-slate-300 hover:border-indigo-400 transition-colors p-8 text-center cursor-pointer relative group bg-gradient-to-b from-slate-50/50 to-white shadow-sm">
+    <section id="upload-section" class="bg-white rounded-2xl border-2 border-dashed border-slate-300 hover:border-indigo-400 transition-colors p-8 text-center cursor-pointer relative group bg-gradient-to-b from-slate-50/50 to-white shadow-2xs">
       <input type="file" id="file-input" class="hidden" accept=".pdf,.png,.jpg,.jpeg,.webp">
       
       <div class="flex flex-col items-center justify-center space-y-3 pointer-events-none">
@@ -95,22 +100,23 @@
         </div>
         <div>
           <p class="text-sm font-semibold text-slate-800">
-            <span class="text-indigo-600 group-hover:underline">Click to upload</span> or drag and drop invoice
+            <span class="text-indigo-600 group-hover:underline">Click to upload</span> or drag and drop document
           </p>
-          <p class="text-xs text-slate-500 mt-1">Supports PDF, PNG, JPG, JPEG, WEBP (Max 20MB)</p>
+          <p class="text-xs text-slate-500 mt-1">Supports Invoices, Receipts, and Handwritten/Printed Tables (Stock Audits, Inventory Sheets)</p>
         </div>
         <div class="flex items-center space-x-2 text-[11px] text-slate-400">
           <span class="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono">PDF</span>
           <span class="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono">PNG / JPG</span>
-          <span class="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono">Structured LLM Extraction</span>
+          <span class="inline-flex items-center px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">Gemini 2.5 Flash Vision</span>
+          <span class="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono">Dynamic Columns</span>
         </div>
       </div>
 
       <!-- Loading Overlay -->
-      <div id="upload-loading" class="hidden absolute inset-0 bg-white/90 backdrop-blur-sm rounded-2xl flex flex-col items-center justify-center z-10">
+      <div id="upload-loading" class="hidden absolute inset-0 bg-white/95 backdrop-blur-xs rounded-2xl flex flex-col items-center justify-center z-10">
         <div class="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
-        <p class="text-sm font-medium text-slate-700 mt-3" id="loading-status-text">Uploading & parsing document with LLM schema...</p>
-        <p class="text-xs text-slate-500 mt-1">Extracting merchant, line items, and totals</p>
+        <p class="text-sm font-semibold text-slate-800 mt-3" id="loading-status-text">Analyzing document with Gemini Vision...</p>
+        <p class="text-xs text-slate-500 mt-1">Reading handwriting, detecting table headers, and structuring cells</p>
       </div>
     </section>
 
@@ -118,15 +124,15 @@
     <section id="workspace-section" class="hidden grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
       <!-- LEFT COLUMN: Document Preview (5 cols) -->
-      <div class="lg:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden h-[750px]">
+      <div class="lg:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-2xs flex flex-col overflow-hidden h-[780px]">
         <!-- Preview Header -->
         <div class="px-4 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
           <div class="flex items-center space-x-2 truncate">
-            <i data-lucide="file-text" class="w-4 h-4 text-indigo-600 flex-shrink-0"></i>
+            <i data-lucide="file-text" class="w-4 h-4 text-indigo-600 shrink-0"></i>
             <span id="preview-filename" class="text-xs font-semibold text-slate-800 truncate">document.pdf</span>
           </div>
           <div class="flex items-center space-x-2">
-            <a id="preview-open-link" href="#" target="_blank" class="p-1 text-slate-500 hover:text-indigo-600 rounded hover:bg-slate-200 transition" title="Open full document">
+            <a id="preview-open-link" href="#" target="_blank" class="p-1 text-slate-500 hover:text-indigo-600 rounded hover:bg-slate-200 transition" title="Open in new tab">
               <i data-lucide="external-link" class="w-4 h-4"></i>
             </a>
           </div>
@@ -134,91 +140,100 @@
 
         <!-- Preview Viewer Area -->
         <div class="flex-1 bg-slate-100 relative overflow-auto flex items-center justify-center p-2" id="preview-container">
-          <!-- Dynamically populated iframe or img -->
+          <!-- Populated dynamically (iframe or image) -->
         </div>
       </div>
 
       <!-- RIGHT COLUMN: Extracted Structured Data (7 cols) -->
-      <div class="lg:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col h-[750px] overflow-hidden">
+      <div class="lg:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-2xs flex flex-col h-[780px] overflow-hidden">
         
         <!-- Extracted Data Header -->
         <div class="px-6 py-4 border-b border-slate-100 bg-white flex items-center justify-between flex-wrap gap-3">
           <div>
             <div class="flex items-center space-x-2">
-              <h2 class="text-base font-bold text-slate-900">Extracted Invoice Record</h2>
-              <span id="badge-engine" class="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] px-2 py-0.5 rounded-full font-semibold">Structured Output</span>
+              <h2 class="text-base font-bold text-slate-900" id="extracted-heading">Extracted Table Record</h2>
+              <span id="badge-doc-type" class="bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">Invoice</span>
+              <span id="badge-engine" class="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] px-2 py-0.5 rounded-full font-semibold">Gemini Vision</span>
             </div>
-            <p class="text-xs text-slate-500 mt-0.5">Stored in SQLite: <code class="text-indigo-600">documents</code> &amp; <code class="text-indigo-600">line_items</code></p>
+            <p class="text-xs text-slate-500 mt-0.5" id="extracted-subheading">
+              Dynamic schema: table columns and rows adapted from document
+            </p>
           </div>
 
-          <!-- Export CSV Button (Prominent) -->
-          <button id="btn-export-csv" class="inline-flex items-center space-x-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-sm shadow-indigo-200 transition transform active:scale-95">
+          <!-- Export CSV Button (Matches exact dynamic columns) -->
+          <button id="btn-export-csv" class="inline-flex items-center space-x-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-2xs shadow-indigo-200 transition transform active:scale-95">
             <i data-lucide="download" class="w-4 h-4"></i>
             <span>Export CSV</span>
           </button>
         </div>
 
         <!-- Scrollable Content -->
-        <div class="flex-1 overflow-y-auto p-6 space-y-6">
+        <div class="flex-1 overflow-y-auto p-6 space-y-5">
 
-          <!-- Header Metadata Cards -->
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <!-- Header Metadata Cards (Dynamic adaptation) -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3" id="meta-cards-container">
             <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
-              <span class="text-[11px] font-medium text-slate-500 uppercase tracking-wider block">Merchant</span>
+              <span id="label-merchant" class="text-[11px] font-medium text-slate-500 uppercase tracking-wider block">Merchant / Title</span>
               <span id="val-merchant" class="text-sm font-semibold text-slate-900 block truncate mt-1">-</span>
             </div>
             <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
-              <span class="text-[11px] font-medium text-slate-500 uppercase tracking-wider block">Invoice #</span>
+              <span id="label-invoice-no" class="text-[11px] font-medium text-slate-500 uppercase tracking-wider block">Reference / Inv #</span>
               <span id="val-invoice-no" class="text-sm font-semibold text-slate-900 block truncate mt-1">-</span>
             </div>
             <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
-              <span class="text-[11px] font-medium text-slate-500 uppercase tracking-wider block">Date</span>
+              <span id="label-date" class="text-[11px] font-medium text-slate-500 uppercase tracking-wider block">Date</span>
               <span id="val-date" class="text-sm font-semibold text-slate-900 block truncate mt-1">-</span>
             </div>
-            <div class="p-3 bg-indigo-50/60 rounded-xl border border-indigo-100">
-              <span class="text-[11px] font-medium text-indigo-600 uppercase tracking-wider block">Grand Total</span>
-              <span id="val-grand-total" class="text-base font-bold text-indigo-700 block truncate mt-0.5">$0.00</span>
+            <div class="p-3 bg-indigo-50/60 rounded-xl border border-indigo-100" id="card-total-box">
+              <span id="label-card-4" class="text-[11px] font-medium text-indigo-600 uppercase tracking-wider block">Grand Total</span>
+              <span id="val-card-4" class="text-base font-bold text-indigo-700 block truncate mt-0.5">$0.00</span>
             </div>
           </div>
 
-          <!-- Line Items Section -->
+          <!-- Notes / Handwriting Remarks Banner (if extracted) -->
+          <div id="notes-banner" class="hidden p-3.5 bg-amber-50/80 rounded-xl border border-amber-200/80 text-xs text-amber-900">
+            <div class="flex items-center space-x-1.5 font-bold mb-1 text-amber-800">
+              <i data-lucide="message-square" class="w-3.5 h-3.5"></i>
+              <span>Handwritten Remarks &amp; Observations:</span>
+            </div>
+            <p id="val-notes" class="leading-relaxed italic text-amber-950 font-serif"></p>
+          </div>
+
+          <!-- Table Section -->
           <div>
             <div class="flex items-center justify-between mb-2.5">
-              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-600">
-                Line Items (<span id="line-items-count">0</span>)
+              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center space-x-1.5">
+                <span>Extracted Table</span>
+                <span class="text-slate-400 font-normal">(<span id="rows-count">0</span> rows, <span id="cols-count">0</span> columns)</span>
               </h3>
-              <span class="text-xs text-slate-400">Foreign key: <code class="text-slate-600">line_items.document_id</code></span>
+              <span class="text-[11px] text-slate-400 font-mono" id="table-mode-badge">Mode: Dynamic Grid</span>
             </div>
 
-            <!-- Line Items Table -->
-            <div class="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
-              <table class="min-w-full divide-y divide-slate-200 text-left text-xs">
-                <thead class="bg-slate-50 font-semibold text-slate-600">
-                  <tr>
-                    <th scope="col" class="py-3 px-3 w-10 text-center">#</th>
-                    <th scope="col" class="py-3 px-4">Item Description</th>
-                    <th scope="col" class="py-3 px-3 text-right">Qty</th>
-                    <th scope="col" class="py-3 px-3 text-right">Unit Price</th>
-                    <th scope="col" class="py-3 px-4 text-right">Total</th>
-                  </tr>
+            <!-- Dynamic Table Container -->
+            <div class="border border-slate-200 rounded-xl overflow-x-auto shadow-2xs">
+              <table class="min-w-full divide-y divide-slate-200 text-left text-xs" id="dynamic-table">
+                <thead class="bg-slate-50 font-semibold text-slate-700 tracking-wider text-[11px]" id="dynamic-thead">
+                  <!-- Dynamic Headers injected by JS -->
                 </thead>
-                <tbody id="line-items-tbody" class="divide-y divide-slate-100 bg-white">
-                  <!-- Populated via JS -->
+                <tbody class="divide-y divide-slate-100 bg-white" id="dynamic-tbody">
+                  <!-- Dynamic Rows injected by JS -->
                 </tbody>
               </table>
             </div>
           </div>
 
-          <!-- Financial Breakdown Card -->
+          <!-- Footer Metadata -->
           <div class="bg-slate-50 rounded-xl p-4 border border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-3">
             <div class="text-slate-500">
-              <span>Database Record ID: <b id="val-doc-id" class="text-slate-700">#0</b></span>
-              <span class="mx-2">•</span>
-              <span>Tax / VAT: <b id="val-tax" class="text-slate-700">$0.00</b></span>
+              <span>Database Record: <b id="val-doc-id" class="text-slate-700">#0</b></span>
+              <span class="mx-2" id="tax-divider">•</span>
+              <span id="tax-container">Tax: <b id="val-tax" class="text-slate-700">$0.00</b></span>
+              <span class="mx-2" id="inspector-divider">•</span>
+              <span id="inspector-container">Inspector: <b id="val-inspector" class="text-slate-700">-</b></span>
             </div>
             <div class="text-right">
-              <span class="text-slate-500 mr-2">Calculated Items Sum:</span>
-              <span id="val-calculated-sum" class="font-bold text-slate-800">$0.00</span>
+              <span class="text-slate-500 mr-1.5">Export:</span>
+              <span class="font-semibold text-indigo-700">Exact Column Mapping Ready</span>
             </div>
           </div>
 
@@ -226,8 +241,8 @@
       </div>
     </section>
 
-    <!-- Document History Drawer / Modal -->
-    <div id="history-modal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+    <!-- Document History Modal -->
+    <div id="history-modal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-slate-900/40 backdrop-blur-2xs flex items-center justify-center p-4">
       <div class="bg-white rounded-2xl max-w-2xl w-full border border-slate-200 shadow-xl overflow-hidden flex flex-col max-h-[80vh]">
         <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div class="flex items-center space-x-2">
@@ -245,27 +260,33 @@
     </div>
 
     <!-- API Key Configuration Modal -->
-    <div id="apikey-modal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="apikey-modal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-slate-900/40 backdrop-blur-2xs flex items-center justify-center p-4">
       <div class="bg-white rounded-2xl max-w-md w-full border border-slate-200 shadow-xl p-6 space-y-4">
         <div class="flex items-center justify-between">
           <h3 class="font-bold text-slate-900 text-sm flex items-center space-x-2">
             <i data-lucide="sparkles" class="w-4 h-4 text-indigo-600"></i>
-            <span>Configure Gemini LLM Key</span>
+            <span>Gemini Vision API Key</span>
           </h3>
           <button id="btn-close-apikey" class="text-slate-400 hover:text-slate-600 p-1">
             <i data-lucide="x" class="w-4 h-4"></i>
           </button>
         </div>
-        <p class="text-xs text-slate-500 leading-relaxed">
-          The parser uses Google Gemini with native Pydantic structured output. If no key is entered, it automatically runs in deterministic heuristic mode or uses the environment <code class="text-indigo-600 font-mono">GEMINI_API_KEY</code>.
-        </p>
+        <div class="space-y-2 text-xs text-slate-600 leading-relaxed">
+          <p>
+            You can set your key in the project <code class="text-indigo-600 font-mono bg-indigo-50 px-1 py-0.5 rounded">.env</code> file:
+          </p>
+          <pre class="bg-slate-900 text-emerald-400 p-2.5 rounded-lg text-[11px] font-mono select-all">GEMINI_API_KEY=AIzaSy...</pre>
+          <p>
+            Alternatively, paste it below to use it directly in this browser session. If left blank, the parser automatically uses the <code class="font-mono">.env</code> file or the intelligent heuristic fallback engine.
+          </p>
+        </div>
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1">Gemini API Key</label>
-          <input type="password" id="input-gemini-key" placeholder="AIzaSy..." class="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <input type="password" id="input-gemini-key" placeholder="AIzaSy..." class="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono">
         </div>
         <div class="flex justify-end space-x-2 pt-2">
           <button id="btn-clear-key" class="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg transition">Clear</button>
-          <button id="btn-save-key" class="px-4 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm transition">Save Key</button>
+          <button id="btn-save-key" class="px-4 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-2xs transition">Save Key</button>
         </div>
       </div>
     </div>

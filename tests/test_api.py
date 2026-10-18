@@ -1,5 +1,6 @@
 """
 Integration and API tests for the parsing endpoint, SQLite database persistence, and CSV export.
+Covers both Invoices and Dynamic Tables (Stock Audit Sheets).
 """
 import os
 import io
@@ -16,10 +17,8 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def setup_and_teardown():
-    # Setup test DB tables
     Base.metadata.create_all(bind=engine)
     yield
-    # We can keep or cleanup if needed
 
 
 def create_dummy_png_bytes():
@@ -35,7 +34,7 @@ def test_root_serves_html():
     assert "DocuParse AI" in response.text
 
 
-def test_parse_endpoint_with_sample_pdf():
+def test_parse_endpoint_with_sample_invoice_pdf():
     sample_pdf_path = os.path.join(os.path.dirname(__file__), "..", "app", "static", "sample_invoice.pdf")
     assert os.path.exists(sample_pdf_path), "Sample PDF should exist"
 
@@ -54,6 +53,9 @@ def test_parse_endpoint_with_sample_pdf():
     doc = data["document"]
     assert doc["id"] is not None
     assert doc["filename"] == "sample_invoice.pdf"
+    assert doc["doc_type"] == "invoice"
+    assert len(doc["columns"]) > 0
+    assert len(doc["rows"]) > 0
     assert len(doc["line_items"]) > 0
 
     # Verify directly in SQLite database
@@ -64,13 +66,45 @@ def test_parse_endpoint_with_sample_pdf():
         assert db_doc.filename == "sample_invoice.pdf"
         assert len(db_doc.line_items) == len(doc["line_items"])
 
-        # Check line item foreign key
         for item in db_doc.line_items:
             assert item.document_id == db_doc.id
             assert item.description
             assert item.total_price >= 0
     finally:
         db.close()
+
+
+def test_parse_endpoint_with_stock_audit_pdf():
+    audit_pdf_path = os.path.join(os.path.dirname(__file__), "..", "app", "static", "sample_stock_audit.pdf")
+    assert os.path.exists(audit_pdf_path), "Stock audit PDF should exist"
+
+    with open(audit_pdf_path, "rb") as f:
+        file_bytes = f.read()
+
+    response = client.post(
+        "/api/parse",
+        files={"file": ("sample_stock_audit.pdf", file_bytes, "application/pdf")}
+    )
+
+    assert response.status_code == 201, f"Failed: {response.text}"
+    data = response.json()
+    assert data["success"] is True
+    doc = data["document"]
+    assert doc["doc_type"] == "stock_audit"
+    assert "Code" in doc["columns"]
+    assert "Bin" in doc["columns"]
+    assert "Physical Count" in doc["columns"]
+    assert len(doc["rows"]) >= 5
+
+    # Test dynamic CSV export matching stock audit columns
+    csv_resp = client.get(f"/api/documents/{doc['id']}/export-csv")
+    assert csv_resp.status_code == 200
+    assert "text/csv" in csv_resp.headers["content-type"]
+    csv_text = csv_resp.text
+    assert "Document Type,stock_audit" in csv_text
+    assert "Code,Item Description,Bin,Book Qty,Physical Count,Variance,Notes,Checked By" in csv_text
+    assert "W-104" in csv_text
+    assert "Hydraulic Flange Seal" in csv_text
 
 
 def test_parse_endpoint_with_image():
@@ -104,7 +138,6 @@ def test_parse_empty_file():
 
 
 def test_get_documents_and_detail():
-    # Fetch all documents
     response = client.get("/api/documents")
     assert response.status_code == 200
     docs = response.json()
@@ -112,14 +145,12 @@ def test_get_documents_and_detail():
     assert len(docs) > 0
 
     doc_id = docs[0]["id"]
-    # Fetch single document
     detail_resp = client.get(f"/api/documents/{doc_id}")
     assert detail_resp.status_code == 200
     assert detail_resp.json()["id"] == doc_id
 
 
 def test_export_csv():
-    # First ensure at least one document exists
     list_resp = client.get("/api/documents")
     docs = list_resp.json()
     assert len(docs) > 0
@@ -130,11 +161,9 @@ def test_export_csv():
     assert "text/csv" in response.headers["content-type"]
     csv_content = response.text
     assert "Document ID" in csv_content
-    assert "Item ID,Description,Quantity,Unit Price,Total Price" in csv_content
 
 
 def test_delete_document():
-    # Create a quick document to delete
     png_bytes = create_dummy_png_bytes()
     upload_resp = client.post(
         "/api/parse",
@@ -145,6 +174,5 @@ def test_delete_document():
     delete_resp = client.delete(f"/api/documents/{doc_id}")
     assert delete_resp.status_code == 200
 
-    # Ensure it no longer exists
     get_resp = client.get(f"/api/documents/{doc_id}")
     assert get_resp.status_code == 404

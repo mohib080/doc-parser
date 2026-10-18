@@ -1,4 +1,4 @@
-// DocuParse AI - Interactive Frontend Controller
+// DocuParse AI - Dynamic Multimodal Document & Vision Controller
 
 document.addEventListener("DOMContentLoaded", () => {
   // Initialize Lucide icons
@@ -19,18 +19,44 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewFilename = document.getElementById("preview-filename");
   const previewOpenLink = document.getElementById("preview-open-link");
 
+  const badgeDocType = document.getElementById("badge-doc-type");
+  const badgeEngine = document.getElementById("badge-engine");
+  const extractedHeading = document.getElementById("extracted-heading");
+  const extractedSubheading = document.getElementById("extracted-subheading");
+
+  // Metadata Card Elements
+  const labelMerchant = document.getElementById("label-merchant");
   const valMerchant = document.getElementById("val-merchant");
+  const labelInvoiceNo = document.getElementById("label-invoice-no");
   const valInvoiceNo = document.getElementById("val-invoice-no");
+  const labelDate = document.getElementById("label-date");
   const valDate = document.getElementById("val-date");
-  const valGrandTotal = document.getElementById("val-grand-total");
+  const cardTotalBox = document.getElementById("card-total-box");
+  const labelCard4 = document.getElementById("label-card-4");
+  const valCard4 = document.getElementById("val-card-4");
+
+  const notesBanner = document.getElementById("notes-banner");
+  const valNotes = document.getElementById("val-notes");
+
+  // Dynamic Table Elements
+  const dynamicThead = document.getElementById("dynamic-thead");
+  const dynamicTbody = document.getElementById("dynamic-tbody");
+  const rowsCount = document.getElementById("rows-count");
+  const colsCount = document.getElementById("cols-count");
+  const tableModeBadge = document.getElementById("table-mode-badge");
+
   const valDocId = document.getElementById("val-doc-id");
   const valTax = document.getElementById("val-tax");
-  const valCalculatedSum = document.getElementById("val-calculated-sum");
-  const lineItemsCount = document.getElementById("line-items-count");
-  const lineItemsTbody = document.getElementById("line-items-tbody");
-  const btnExportCsv = document.getElementById("btn-export-csv");
+  const taxContainer = document.getElementById("tax-container");
+  const taxDivider = document.getElementById("tax-divider");
+  const valInspector = document.getElementById("val-inspector");
+  const inspectorContainer = document.getElementById("inspector-container");
+  const inspectorDivider = document.getElementById("inspector-divider");
 
+  const btnExportCsv = document.getElementById("btn-export-csv");
   const btnLoadSample = document.getElementById("btn-load-sample");
+  const btnLoadAudit = document.getElementById("btn-load-audit");
+
   const btnToggleHistory = document.getElementById("btn-toggle-history");
   const historyModal = document.getElementById("history-modal");
   const btnCloseHistory = document.getElementById("btn-close-history");
@@ -48,16 +74,16 @@ document.addEventListener("DOMContentLoaded", () => {
   // Update API Key UI State
   function updateApiKeyStatus() {
     if (geminiApiKey) {
-      apiKeyStatus.textContent = "LLM: Custom Gemini Key";
-      apiKeyStatus.classList.add("text-indigo-600");
+      apiKeyStatus.textContent = "Vision: Active (Custom Key)";
+      apiKeyStatus.classList.add("text-emerald-700", "font-bold");
     } else {
-      apiKeyStatus.textContent = "LLM: Fallback/Env";
-      apiKeyStatus.classList.remove("text-indigo-600");
+      apiKeyStatus.textContent = "Key: .env / Fallback";
+      apiKeyStatus.classList.remove("text-emerald-700", "font-bold");
     }
   }
   updateApiKeyStatus();
 
-  // Load Document History count
+  // Load Document History
   async function refreshHistory() {
     try {
       const res = await fetch("/api/documents");
@@ -72,40 +98,46 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   refreshHistory();
 
-  // Render History List
   function renderHistoryList(docs) {
     if (!docs || docs.length === 0) {
       historyListContainer.innerHTML = `
         <div class="text-center py-8 text-slate-400 text-xs">
-          No documents parsed yet. Upload your first invoice above!
+          No documents parsed yet. Upload your first invoice or stock audit above!
         </div>
       `;
       return;
     }
 
-    historyListContainer.innerHTML = docs.map(d => `
-      <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50/30 transition cursor-pointer group" data-doc-id="${d.id}">
-        <div class="flex items-center space-x-3 overflow-hidden">
-          <div class="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center flex-shrink-0">
-            <i data-lucide="file-text" class="w-4 h-4"></i>
+    historyListContainer.innerHTML = docs.map(d => {
+      const isInvoice = (d.doc_type || "").includes("invoice");
+      const icon = isInvoice ? "receipt" : "clipboard-check";
+      const iconBg = isInvoice ? "bg-indigo-50 text-indigo-600" : "bg-emerald-50 text-emerald-600";
+      const badgeText = isInvoice ? `${d.currency || '$'}${Number(d.grand_total || 0).toFixed(2)}` : `${(d.rows || []).length || (d.line_items || []).length} items`;
+
+      return `
+        <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:border-indigo-200 hover:bg-slate-50 transition cursor-pointer group" data-doc-id="${d.id}">
+          <div class="flex items-center space-x-3 overflow-hidden">
+            <div class="w-8 h-8 rounded-lg ${iconBg} flex items-center justify-center shrink-0">
+              <i data-lucide="${icon}" class="w-4 h-4"></i>
+            </div>
+            <div class="truncate">
+              <p class="text-xs font-semibold text-slate-800 truncate">${escapeHtml(d.merchant || d.title || d.filename)}</p>
+              <p class="text-[11px] text-slate-500">${escapeHtml(d.invoice_no || d.reference_no || 'Ref')} • ${escapeHtml(d.date || 'No Date')} • <span class="capitalize text-slate-600">${escapeHtml(d.doc_type || 'doc')}</span></p>
+            </div>
           </div>
-          <div class="truncate">
-            <p class="text-xs font-semibold text-slate-800 truncate">${escapeHtml(d.merchant || d.filename)}</p>
-            <p class="text-[11px] text-slate-500">${escapeHtml(d.invoice_no || 'No Inv #')} • ${escapeHtml(d.date || 'No Date')}</p>
+          <div class="flex items-center space-x-3 shrink-0">
+            <span class="text-xs font-bold text-slate-800">${badgeText}</span>
+            <button class="btn-delete-doc p-1 text-slate-400 hover:text-red-600 rounded transition" data-delete-id="${d.id}" title="Delete document">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
           </div>
         </div>
-        <div class="flex items-center space-x-3 flex-shrink-0">
-          <span class="text-xs font-bold text-slate-800">${d.currency || '$'}${Number(d.grand_total || 0).toFixed(2)}</span>
-          <button class="btn-delete-doc p-1 text-slate-400 hover:text-red-600 rounded transition" data-delete-id="${d.id}" title="Delete document">
-            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-          </button>
-        </div>
-      </div>
-    `).join("");
+      `;
+    }).join("");
 
     lucide.createIcons();
 
-    // Attach click listeners
+    // Attach listeners
     historyListContainer.querySelectorAll("[data-doc-id]").forEach(item => {
       item.addEventListener("click", async (e) => {
         if (e.target.closest(".btn-delete-doc")) return;
@@ -119,7 +151,7 @@ document.addEventListener("DOMContentLoaded", () => {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
         const id = btn.getAttribute("data-delete-id");
-        if (confirm("Delete this document and its line items?")) {
+        if (confirm("Delete this document record?")) {
           await fetch(`/api/documents/${id}`, { method: "DELETE" });
           refreshHistory();
           if (currentDocument && currentDocument.id == id) {
@@ -131,7 +163,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Load specific document by ID
+  // Load document by ID
   async function loadDocumentById(id) {
     try {
       const res = await fetch(`/api/documents/${id}`);
@@ -143,7 +175,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Drag-and-Drop & File Input Handlers
+  // Upload handlers
   uploadSection.addEventListener("click", () => fileInput.click());
 
   uploadSection.addEventListener("dragover", (e) => {
@@ -171,13 +203,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Upload and Parse API Call
+  // Upload & Parse API Call
   async function uploadFile(file) {
     const formData = new FormData();
     formData.append("file", file);
 
     uploadLoading.classList.remove("hidden");
-    loadingStatusText.textContent = `Processing ${file.name} with LLM schema...`;
+    loadingStatusText.textContent = `Analyzing ${file.name} with Gemini 2.5 Flash Vision...`;
 
     try {
       const headers = {};
@@ -202,22 +234,20 @@ document.addEventListener("DOMContentLoaded", () => {
       refreshHistory();
 
     } catch (err) {
-      alert("Failed to parse document: " + err.message);
+      alert("Document parsing failed: " + err.message);
     } finally {
       uploadLoading.classList.add("hidden");
       fileInput.value = "";
     }
   }
 
-  // Display Document & Extracted Data in Workspace
+  // Display Document & Adapt UI to Dynamic Columns and Rows
   function displayDocumentData(doc) {
     currentDocument = doc;
     workspaceSection.classList.remove("hidden");
-
-    // Scroll smoothly to workspace
     workspaceSection.scrollIntoView({ behavior: "smooth" });
 
-    // 1. Render Left Preview Column
+    // 1. Document Preview
     previewFilename.textContent = doc.filename;
     previewOpenLink.href = doc.file_path;
 
@@ -230,49 +260,177 @@ document.addEventListener("DOMContentLoaded", () => {
     } else {
       previewContainer.innerHTML = `
         <div class="w-full h-full flex items-center justify-center p-2">
-          <img src="${doc.file_path}" alt="Document Preview" class="max-w-full max-h-full object-contain rounded-lg shadow-sm border border-slate-200">
+          <img src="${doc.file_path}" alt="Document Preview" class="max-w-full max-h-full object-contain rounded-lg shadow-xs border border-slate-200">
         </div>
       `;
     }
 
-    // 2. Render Right Extracted Data Column
-    valMerchant.textContent = doc.merchant || "Unknown Merchant";
-    valInvoiceNo.textContent = doc.invoice_no || "N/A";
-    valDate.textContent = doc.date || "N/A";
-    
-    const curr = doc.currency || "$";
-    valGrandTotal.textContent = `${curr}${Number(doc.grand_total || 0).toFixed(2)}`;
-    valDocId.textContent = `#${doc.id}`;
-    valTax.textContent = `${curr}${Number(doc.tax || 0).toFixed(2)}`;
+    // 2. Determine Document Type and Style
+    const docType = (doc.doc_type || "invoice").toLowerCase();
+    const isInvoice = docType.includes("invoice") || docType.includes("receipt");
 
-    // Render Line Items
-    const items = doc.line_items || [];
-    lineItemsCount.textContent = items.length;
-
-    let itemsSum = 0;
-    if (items.length === 0) {
-      lineItemsTbody.innerHTML = `
-        <tr>
-          <td colspan="5" class="py-6 text-center text-slate-400">No line items identified.</td>
-        </tr>
-      `;
+    badgeDocType.textContent = isInvoice ? "Invoice" : docType.replace("_", " ").toUpperCase();
+    if (isInvoice) {
+      badgeDocType.className = "bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider";
+      extractedHeading.textContent = "Extracted Invoice Record";
+      extractedSubheading.textContent = "Relational financial line items & tax calculations";
     } else {
-      lineItemsTbody.innerHTML = items.map((item, idx) => {
-        itemsSum += Number(item.total_price || 0);
-        return `
-          <tr class="hover:bg-slate-50/70 transition">
-            <td class="py-3 px-3 text-center text-slate-400 font-mono text-[11px]">${idx + 1}</td>
-            <td class="py-3 px-4 font-medium text-slate-800">${escapeHtml(item.description)}</td>
-            <td class="py-3 px-3 text-right text-slate-600 font-mono">${item.quantity}</td>
-            <td class="py-3 px-3 text-right text-slate-600 font-mono">${curr}${Number(item.unit_price).toFixed(2)}</td>
-            <td class="py-3 px-4 text-right font-semibold text-slate-800 font-mono">${curr}${Number(item.total_price).toFixed(2)}</td>
-          </tr>
-        `;
-      }).join("");
+      badgeDocType.className = "bg-emerald-50 text-emerald-800 border border-emerald-300 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider";
+      extractedHeading.textContent = "Extracted Tabular & Audit Record";
+      extractedSubheading.textContent = "Dynamic grid adapted to document headers and handwriting";
     }
 
-    valCalculatedSum.textContent = `${curr}${itemsSum.toFixed(2)}`;
+    // 3. Adaptive Metadata Cards
+    if (isInvoice) {
+      labelMerchant.textContent = "Merchant / Vendor";
+      valMerchant.textContent = doc.merchant || doc.title || "Unknown Merchant";
+
+      labelInvoiceNo.textContent = "Invoice #";
+      valInvoiceNo.textContent = doc.invoice_no || doc.reference_no || "N/A";
+
+      labelDate.textContent = "Invoice Date";
+      valDate.textContent = doc.date || "N/A";
+
+      cardTotalBox.className = "p-3 bg-indigo-50/60 rounded-xl border border-indigo-100";
+      labelCard4.textContent = "Grand Total";
+      labelCard4.className = "text-[11px] font-medium text-indigo-600 uppercase tracking-wider block";
+      const curr = doc.currency || "$";
+      valCard4.textContent = `${curr}${Number(doc.grand_total || 0).toFixed(2)}`;
+      valCard4.className = "text-base font-bold text-indigo-700 block truncate mt-0.5";
+
+      taxContainer.classList.remove("hidden");
+      taxDivider.classList.remove("hidden");
+      valTax.textContent = `${curr}${Number(doc.tax || 0).toFixed(2)}`;
+
+      inspectorContainer.classList.add("hidden");
+      inspectorDivider.classList.add("hidden");
+    } else {
+      // Stock Audit / Custom Table Mode
+      labelMerchant.textContent = "Document / Audit Title";
+      valMerchant.textContent = doc.title || doc.merchant || "Stock Audit Sheet";
+
+      labelInvoiceNo.textContent = "Audit / Sheet #";
+      valInvoiceNo.textContent = doc.reference_no || doc.invoice_no || "N/A";
+
+      labelDate.textContent = "Audit Date";
+      valDate.textContent = doc.date || "N/A";
+
+      cardTotalBox.className = "p-3 bg-emerald-50/60 rounded-xl border border-emerald-200";
+      if (doc.inspector) {
+        labelCard4.textContent = "Auditor / Checked By";
+        labelCard4.className = "text-[11px] font-medium text-emerald-700 uppercase tracking-wider block";
+        valCard4.textContent = doc.inspector;
+        valCard4.className = "text-sm font-bold text-emerald-900 block truncate mt-0.5";
+      } else {
+        labelCard4.textContent = "Total Items Count";
+        labelCard4.className = "text-[11px] font-medium text-emerald-700 uppercase tracking-wider block";
+        valCard4.textContent = `${(doc.rows || []).length || (doc.line_items || []).length} Rows`;
+        valCard4.className = "text-base font-bold text-emerald-800 block truncate mt-0.5";
+      }
+
+      taxContainer.classList.add("hidden");
+      taxDivider.classList.add("hidden");
+
+      if (doc.inspector) {
+        inspectorContainer.classList.remove("hidden");
+        inspectorDivider.classList.remove("hidden");
+        valInspector.textContent = doc.inspector;
+      } else {
+        inspectorContainer.classList.add("hidden");
+        inspectorDivider.classList.add("hidden");
+      }
+    }
+
+    valDocId.textContent = `#${doc.id}`;
+
+    // 4. Notes / Handwritten Remarks Banner
+    if (doc.notes && doc.notes.trim()) {
+      notesBanner.classList.remove("hidden");
+      valNotes.textContent = doc.notes.trim();
+    } else {
+      notesBanner.classList.add("hidden");
+    }
+
+    // 5. Dynamic Table Rendering
+    renderDynamicTable(doc, isInvoice);
+
     lucide.createIcons();
+  }
+
+  // Render Dynamic Columns & Rows
+  function renderDynamicTable(doc, isInvoice) {
+    let columns = doc.columns || [];
+    let rows = doc.rows || [];
+
+    // Fallback if columns not set but line_items present
+    if ((!columns || columns.length === 0) && doc.line_items && doc.line_items.length > 0) {
+      columns = ["Description", "Quantity", "Unit Price", "Total"];
+      const curr = doc.currency || "$";
+      rows = doc.line_items.map(item => ({
+        "Description": item.description,
+        "Quantity": String(item.quantity),
+        "Unit Price": `${curr}${Number(item.unit_price).toFixed(2)}`,
+        "Total": `${curr}${Number(item.total_price).toFixed(2)}`
+      }));
+    }
+
+    rowsCount.textContent = rows.length;
+    colsCount.textContent = columns.length;
+    tableModeBadge.textContent = isInvoice ? "Mode: Financial Invoice" : "Mode: Dynamic Table";
+
+    // Build Table Headers
+    dynamicThead.innerHTML = `
+      <tr>
+        <th scope="col" class="py-3 px-3 w-10 text-center uppercase tracking-wider">#</th>
+        ${columns.map(col => `
+          <th scope="col" class="py-3 px-3.5 uppercase tracking-wider font-semibold whitespace-nowrap">
+            ${escapeHtml(col)}
+          </th>
+        `).join("")}
+      </tr>
+    `;
+
+    // Build Table Body
+    if (rows.length === 0) {
+      dynamicTbody.innerHTML = `
+        <tr>
+          <td colspan="${columns.length + 1}" class="py-8 text-center text-slate-400">
+            No rows found in this document.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    dynamicTbody.innerHTML = rows.map((row, idx) => {
+      return `
+        <tr class="hover:bg-slate-50/80 transition">
+          <td class="py-2.5 px-3 text-center text-slate-400 font-mono text-[11px]">${idx + 1}</td>
+          ${columns.map(col => {
+            const rawVal = row[col] !== undefined && row[col] !== null ? String(row[col]) : "";
+            const isNumeric = /^-?\$?[\d,]+(\.\d+)?$/.test(rawVal.trim());
+            const isDiff = col.toLowerCase().includes("diff") || col.toLowerCase().includes("variance");
+            
+            let cellClass = "py-2.5 px-3.5 text-slate-700 whitespace-nowrap";
+            let formattedContent = escapeHtml(rawVal);
+
+            if (isDiff) {
+              if (rawVal.startsWith("-")) {
+                formattedContent = `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold bg-red-50 text-red-700 border border-red-200">${formattedContent}</span>`;
+              } else if (rawVal.startsWith("+")) {
+                formattedContent = `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">${formattedContent}</span>`;
+              } else if (rawVal === "0") {
+                formattedContent = `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-600">0</span>`;
+              }
+            } else if (isNumeric) {
+              cellClass += " font-mono";
+            }
+
+            return `<td class="${cellClass}">${formattedContent}</td>`;
+          }).join("")}
+        </tr>
+      `;
+    }).join("");
   }
 
   // Export CSV Action
@@ -281,37 +439,48 @@ document.addEventListener("DOMContentLoaded", () => {
       alert("No active document loaded.");
       return;
     }
-    // Direct browser download from the API endpoint
+    // Direct API CSV download matching exact dynamic columns
     window.location.href = `/api/documents/${currentDocument.id}/export-csv`;
   });
 
-  // Load Sample Invoice Quick Test
+  // Sample Loaders
   btnLoadSample.addEventListener("click", async () => {
     try {
       uploadLoading.classList.remove("hidden");
-      loadingStatusText.textContent = "Loading and parsing Acme Cloud sample invoice...";
+      loadingStatusText.textContent = "Loading and parsing Acme Cloud invoice sample...";
 
-      // Fetch the sample invoice file from static assets
       const sampleResp = await fetch("/static/sample_invoice.pdf");
-      if (!sampleResp.ok) throw new Error("Sample file not found");
+      if (!sampleResp.ok) throw new Error("Sample invoice file not found");
       const blob = await sampleResp.blob();
       const file = new File([blob], "sample_invoice.pdf", { type: "application/pdf" });
 
-      // Run parse
       await uploadFile(file);
     } catch (err) {
-      alert("Error loading sample invoice: " + err.message);
+      alert("Error loading sample: " + err.message);
+      uploadLoading.classList.add("hidden");
+    }
+  });
+
+  btnLoadAudit.addEventListener("click", async () => {
+    try {
+      uploadLoading.classList.remove("hidden");
+      loadingStatusText.textContent = "Loading and parsing Central Warehouse Stock Audit sheet...";
+
+      const sampleResp = await fetch("/static/sample_stock_audit.pdf");
+      if (!sampleResp.ok) throw new Error("Sample stock audit file not found");
+      const blob = await sampleResp.blob();
+      const file = new File([blob], "sample_stock_audit.pdf", { type: "application/pdf" });
+
+      await uploadFile(file);
+    } catch (err) {
+      alert("Error loading stock audit: " + err.message);
       uploadLoading.classList.add("hidden");
     }
   });
 
   // History Modal handlers
-  btnToggleHistory.addEventListener("click", () => {
-    historyModal.classList.remove("hidden");
-  });
-  btnCloseHistory.addEventListener("click", () => {
-    historyModal.classList.add("hidden");
-  });
+  btnToggleHistory.addEventListener("click", () => historyModal.classList.remove("hidden"));
+  btnCloseHistory.addEventListener("click", () => historyModal.classList.add("hidden"));
   historyModal.addEventListener("click", (e) => {
     if (e.target === historyModal) historyModal.classList.add("hidden");
   });
@@ -321,9 +490,7 @@ document.addEventListener("DOMContentLoaded", () => {
     inputGeminiKey.value = geminiApiKey;
     apiKeyModal.classList.remove("hidden");
   });
-  btnCloseApiKey.addEventListener("click", () => {
-    apiKeyModal.classList.add("hidden");
-  });
+  btnCloseApiKey.addEventListener("click", () => apiKeyModal.classList.add("hidden"));
   apiKeyModal.addEventListener("click", (e) => {
     if (e.target === apiKeyModal) apiKeyModal.classList.add("hidden");
   });
@@ -341,7 +508,7 @@ document.addEventListener("DOMContentLoaded", () => {
     apiKeyModal.classList.add("hidden");
   });
 
-  // Helper: Escape HTML to avoid XSS
+  // Helper
   function escapeHtml(str) {
     if (!str) return "";
     return String(str)

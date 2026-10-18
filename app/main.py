@@ -1,10 +1,12 @@
 """
 FastAPI application for Document Parser prototype.
+Supports both standard Invoices and dynamic custom tables (Stock Audits, Inventory Sheets).
 """
 import os
 import uuid
 import csv
 import io
+import json
 from typing import List, Optional
 from datetime import datetime
 
@@ -13,10 +15,14 @@ from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from dotenv import load_dotenv
+
+# Load .env file automatically
+load_dotenv()
 
 from .database import engine, Base, get_db
 from .models import Document, LineItem
-from .schemas import DocumentResponse, ParseResponse, InvoiceData
+from .schemas import DocumentResponse, ParseResponse, ParsedDocumentData
 from .parser import DocumentParser
 
 # Ensure DB tables exist
@@ -30,9 +36,9 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 
 app = FastAPI(
-    title="Document Parser API",
-    description="LLM-Powered Document and Invoice Parser Prototype",
-    version="1.0.0"
+    title="DocuParse AI - Intelligent Document & Table Parser",
+    description="Multimodal LLM Document & Vision Extraction (Gemini 2.5 Flash)",
+    version="2.0.0"
 )
 
 # CORS Middleware
@@ -52,8 +58,9 @@ async def parse_document(
     db: Session = Depends(get_db)
 ):
     """
-    Accepts a PDF or Image invoice document, extracts structured data using an LLM schema,
-    persists the document and line items into SQLite, and returns the parsed record.
+    Accepts a PDF or Image (handwritten/printed Invoice or Stock Audit Sheet),
+    extracts structured data using Gemini 2.5 Flash Vision API,
+    persists into SQLite, and returns the parsed record with dynamic columns & rows.
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
@@ -76,7 +83,7 @@ async def parse_document(
     with open(saved_path, "wb") as f:
         f.write(file_bytes)
 
-    # Parse with DocumentParser (LLM or intelligent fallback)
+    # API key preference: Header > .env/environment
     api_key = x_gemini_api_key or os.environ.get("GEMINI_API_KEY")
     parser = DocumentParser(api_key=api_key)
     parsed_data, raw_text = parser.parse(file_bytes, file.filename, file.content_type or "application/octet-stream")
@@ -86,19 +93,24 @@ async def parse_document(
         filename=file.filename,
         file_path=saved_path,
         content_type=file.content_type or "application/octet-stream",
-        merchant=parsed_data.merchant,
+        doc_type=parsed_data.doc_type,
+        merchant=parsed_data.title,
         invoice_date=parsed_data.date,
-        invoice_no=parsed_data.invoice_no,
+        invoice_no=parsed_data.reference_no,
+        inspector=parsed_data.inspector,
+        columns_json=json.dumps(parsed_data.columns),
+        rows_json=json.dumps(parsed_data.rows),
         grand_total=parsed_data.grand_total or 0.0,
         currency=parsed_data.currency or "$",
         tax=parsed_data.tax or 0.0,
+        notes=parsed_data.notes,
         raw_text=raw_text,
         created_at=datetime.utcnow()
     )
     db.add(doc_record)
     db.flush()  # populate doc_record.id
 
-    # Save to SQLite database: 'line_items' table
+    # Save to SQLite database: 'line_items' table (backward compatible relational link)
     for item in parsed_data.line_items:
         line_item_record = LineItem(
             document_id=doc_record.id,
@@ -112,48 +124,27 @@ async def parse_document(
     db.commit()
     db.refresh(doc_record)
 
+    doc_dict = doc_record.to_dict()
+    doc_dict["file_path"] = f"/api/files/{unique_name}"
+
     return {
         "success": True,
-        "message": f"Successfully parsed document {file.filename}",
-        "document": {
-            "id": doc_record.id,
-            "filename": doc_record.filename,
-            "file_path": f"/api/files/{unique_name}",
-            "content_type": doc_record.content_type,
-            "merchant": doc_record.merchant,
-            "date": doc_record.invoice_date,
-            "invoice_no": doc_record.invoice_no,
-            "grand_total": doc_record.grand_total,
-            "currency": doc_record.currency,
-            "tax": doc_record.tax,
-            "created_at": doc_record.created_at,
-            "line_items": [i.to_dict() for i in doc_record.line_items]
-        },
+        "message": f"Successfully parsed {parsed_data.doc_type} document '{file.filename}'",
+        "document": doc_dict,
         "parsed_data": parsed_data
     }
 
 
 @app.get("/api/documents", response_model=List[DocumentResponse])
 def get_documents(db: Session = Depends(get_db)):
-    """Retrieve list of all parsed documents with line items."""
+    """Retrieve list of all parsed documents with dynamic columns, rows, and line items."""
     docs = db.query(Document).order_by(Document.id.desc()).all()
     results = []
     for d in docs:
+        d_dict = d.to_dict()
         file_basename = os.path.basename(d.file_path)
-        results.append({
-            "id": d.id,
-            "filename": d.filename,
-            "file_path": f"/api/files/{file_basename}",
-            "content_type": d.content_type,
-            "merchant": d.merchant,
-            "date": d.invoice_date,
-            "invoice_no": d.invoice_no,
-            "grand_total": d.grand_total,
-            "currency": d.currency,
-            "tax": d.tax,
-            "created_at": d.created_at,
-            "line_items": [i.to_dict() for i in d.line_items]
-        })
+        d_dict["file_path"] = f"/api/files/{file_basename}"
+        results.append(d_dict)
     return results
 
 
@@ -163,21 +154,10 @@ def get_document(document_id: int, db: Session = Depends(get_db)):
     d = db.query(Document).filter(Document.id == document_id).first()
     if not d:
         raise HTTPException(status_code=404, detail="Document not found")
+    d_dict = d.to_dict()
     file_basename = os.path.basename(d.file_path)
-    return {
-        "id": d.id,
-        "filename": d.filename,
-        "file_path": f"/api/files/{file_basename}",
-        "content_type": d.content_type,
-        "merchant": d.merchant,
-        "date": d.invoice_date,
-        "invoice_no": d.invoice_no,
-        "grand_total": d.grand_total,
-        "currency": d.currency,
-        "tax": d.tax,
-        "created_at": d.created_at,
-        "line_items": [i.to_dict() for i in d.line_items]
-    }
+    d_dict["file_path"] = f"/api/files/{file_basename}"
+    return d_dict
 
 
 @app.delete("/api/documents/{document_id}")
@@ -198,36 +178,66 @@ def delete_document(document_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/documents/{document_id}/export-csv")
 def export_csv(document_id: int, db: Session = Depends(get_db)):
-    """Export document line items to a CSV file."""
+    """
+    Export document data to CSV matching the exact dynamic table columns.
+    For Invoices: Description, Quantity, Unit Price, Total Price.
+    For Stock Audits / Custom Tables: Code, Item Description, Bin, Book Qty, Physical Count, Variance, Notes, Checked By.
+    """
     d = db.query(Document).filter(Document.id == document_id).first()
     if not d:
         raise HTTPException(status_code=404, detail="Document not found")
 
     output = io.StringIO()
     writer = csv.writer(output)
-    # Write metadata header
+
+    # Document Header Section
     writer.writerow(["Document ID", d.id])
     writer.writerow(["Filename", d.filename])
-    writer.writerow(["Merchant", d.merchant])
-    writer.writerow(["Invoice Number", d.invoice_no])
-    writer.writerow(["Invoice Date", d.invoice_date])
-    writer.writerow(["Currency", d.currency])
-    writer.writerow(["Grand Total", d.grand_total])
-    writer.writerow(["Tax", d.tax])
+    writer.writerow(["Document Type", d.doc_type or "invoice"])
+    writer.writerow(["Title / Vendor", d.merchant])
+    writer.writerow(["Date", d.invoice_date])
+    writer.writerow(["Reference / Invoice #", d.invoice_no])
+    if d.inspector:
+        writer.writerow(["Inspector / Checked By", d.inspector])
+    if d.grand_total and d.grand_total > 0:
+        writer.writerow(["Currency", d.currency or "$"])
+        writer.writerow(["Grand Total", d.grand_total])
+        writer.writerow(["Tax", d.tax or 0.0])
+    if d.notes:
+        writer.writerow(["Notes", d.notes])
     writer.writerow([])
-    # Write line items table
-    writer.writerow(["Item ID", "Description", "Quantity", "Unit Price", "Total Price"])
-    for item in d.line_items:
-        writer.writerow([
-            item.id,
-            item.description,
-            item.quantity,
-            item.unit_price,
-            item.total_price
-        ])
+
+    # Parse columns and rows
+    try:
+        columns = json.loads(d.columns_json) if d.columns_json else []
+    except Exception:
+        columns = []
+    try:
+        rows = json.loads(d.rows_json) if d.rows_json else []
+    except Exception:
+        rows = []
+
+    # Write Dynamic Table Columns
+    if columns and rows:
+        writer.writerow(columns)
+        for r in rows:
+            writer.writerow([r.get(c, "") for c in columns])
+    else:
+        # Fallback to standard line_items if columns_json not present
+        writer.writerow(["Item ID", "Description", "Quantity", "Unit Price", "Total Price"])
+        for item in d.line_items:
+            writer.writerow([
+                item.id,
+                item.description,
+                item.quantity,
+                item.unit_price,
+                item.total_price
+            ])
 
     output.seek(0)
-    filename = f"invoice_{d.invoice_no or d.id}_{d.merchant or 'export'}.csv".replace(" ", "_")
+    clean_title = (d.merchant or "document").replace(" ", "_").replace("/", "_")
+    filename = f"{d.doc_type or 'doc'}_{d.invoice_no or d.id}_{clean_title}.csv"
+
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
@@ -241,8 +251,7 @@ def serve_file(filename: str):
     file_path = os.path.join(UPLOAD_DIR, filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
-    
-    # Determine media type
+
     ext = os.path.splitext(filename)[1].lower()
     media_types = {
         ".pdf": "application/pdf",
@@ -255,15 +264,15 @@ def serve_file(filename: str):
     return FileResponse(file_path, media_type=media_type)
 
 
-# Mount static assets
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-
 @app.get("/favicon.ico")
 def favicon():
     """Return empty 204 for favicon requests."""
     from fastapi import Response
     return Response(status_code=204)
+
+
+# Mount static assets
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
@@ -272,4 +281,4 @@ def read_root():
     index_file = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index_file):
         return FileResponse(index_file, media_type="text/html")
-    return {"message": "Document Parser Prototype is running. Open /docs for Swagger API."}
+    return {"message": "DocuParse AI Prototype is running. Open /docs for Swagger API."}
