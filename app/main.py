@@ -259,6 +259,13 @@ def serve_file(filename: str):
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+@app.get("/favicon.ico")
+def favicon():
+    """Return empty 204 for favicon requests."""
+    from fastapi import Response
+    return Response(status_code=204)
+
+
 @app.get("/")
 def read_root():
     """Serve the single-page frontend."""

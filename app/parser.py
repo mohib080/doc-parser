@@ -103,26 +103,31 @@ def heuristic_invoice_parser(text: str, filename: str = "") -> InvoiceData:
 
     # 5. Tax extraction
     tax_match = re.search(
-        r'(?:tax|vat|gst)\s*[:$€£]?\s*([$€£])?\s*([\d,]+\.?\d*)',
+        r'(?:tax|vat|gst)[^\n\r]*?:\s*[$€£]?\s*([\d,]+\.?\d*)',
         clean_text,
         re.IGNORECASE
     )
+    if not tax_match:
+        tax_match = re.search(
+            r'(?:tax|vat|gst)[^\n\r]*?\s*[$€£]\s*([\d,]+\.?\d*)',
+            clean_text,
+            re.IGNORECASE
+        )
     tax_val = 0.0
-    if tax_match:
+    if tax_match and tax_match.group(1):
         try:
-            tax_val = float(tax_match.group(2).replace(",", ""))
+            tax_val = float(tax_match.group(1).replace(",", ""))
         except ValueError:
             tax_val = 0.0
 
     # 6. Line Items extraction
     line_items = []
-    # Pattern to match table rows: e.g. "Cloud Hosting Tier 1    2    49.99    99.98"
+    # Pattern A: Single-line table rows (e.g. "Cloud Hosting Tier 1    2    49.99    99.98")
     row_pattern = re.compile(
         r'^(?P<desc>[A-Za-z0-9\s/_\-().]{3,}?)\s+(?P<qty>\d+(?:\.\d+)?)\s+(?P<price>\$?\d+(?:\.\d{1,2})?)\s+(?P<total>\$?\d+(?:\.\d{1,2})?)$'
     )
 
     for line in lines:
-        # Skip headers or total lines
         if re.search(r'(subtotal|total|tax|discount|invoice|merchant|date|page)', line, re.IGNORECASE):
             continue
         match = row_pattern.match(line)
@@ -137,6 +142,38 @@ def heuristic_invoice_parser(text: str, filename: str = "") -> InvoiceData:
                 unit_price=unit_p,
                 total_price=tot_p
             ))
+
+    # Pattern B: Multi-line table rows (common in PDF extracted text where columns are on separate lines)
+    if not line_items:
+        i = 0
+        while i < len(lines):
+            if i + 3 < len(lines):
+                l_desc = lines[i]
+                l_qty = lines[i + 1]
+                l_price = lines[i + 2]
+                l_total = lines[i + 3]
+
+                is_qty = bool(re.match(r'^\d+(\.\d+)?$', l_qty))
+                is_price = bool(re.match(r'^\$?\d+[\d,]*(\.\d{1,2})?$', l_price))
+                is_total = bool(re.match(r'^\$?\d+[\d,]*(\.\d{1,2})?$', l_total))
+                is_not_header = not re.search(r'^(description|qty|price|total|subtotal|tax|invoice|date|billed)\b', l_desc, re.IGNORECASE)
+
+                if is_qty and is_price and is_total and is_not_header and len(l_desc) >= 3:
+                    try:
+                        q = float(l_qty)
+                        up = float(l_price.replace("$", "").replace(",", ""))
+                        tp = float(l_total.replace("$", "").replace(",", ""))
+                        line_items.append(LineItemSchema(
+                            description=l_desc.strip(),
+                            quantity=q,
+                            unit_price=up,
+                            total_price=tp
+                        ))
+                        i += 4
+                        continue
+                    except ValueError:
+                        pass
+            i += 1
 
     # If no line items were detected via strict row pattern, generate reasonable items from totals or defaults
     if not line_items:
